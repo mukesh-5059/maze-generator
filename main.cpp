@@ -1,29 +1,17 @@
-#include <ncurses.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-#include <cmath>
-#include <unistd.h>
+#include "raylib.h"
+#include <math.h>
 
-#define TARGET_FPS 60
-#define FRAME_TIME_USEC (1000000 / TARGET_FPS)
 #define MAP_SIZE 32
-#define TILE_SIZE 8
-
-const double todeg=180/M_PI;
-const double torad=M_PI/180;
-
-
-float fov = torad * 70;
-int toggle_map = 0;
-int height, width, ch;
-char *display_buffer;
+#define TILE_SIZE 24 // Increased from 8 so the window isn't tiny
 
 struct p {
-    float wx, wy, wz;
-    int mx = 1, my = 1;
-    float speed = 50.0;
+    float wx, wy, wz, r;
+    int mx, my;
+    float speed;
 };
+
+const int screenWidth = MAP_SIZE * TILE_SIZE;
+const int screenHeight = MAP_SIZE * TILE_SIZE;
 
 struct p player;
 
@@ -48,7 +36,7 @@ const char *map[MAP_SIZE] = {
     "#              ##              #",
     "# #### ####### ## ####### #### #",
     "#   ##         ##         ##   #",
-    "### ## ## ########## #### ## ###",
+    "### ## ## ########## ## ## #####",
     "#      ##     ##     ##        #",
     "# ########### ## ###########   #",
     "# #           ##           #   #",
@@ -62,132 +50,86 @@ const char *map[MAP_SIZE] = {
     "################################"
 };
 
-
-
-
-
-
-
-
-
-void init_buf() {
-    getmaxyx(stdscr, height, width);
-    if (display_buffer) free(display_buffer);
-    display_buffer = (char*)malloc(height * width + 1);
+void init(){
+    player.mx = 1;
+    player.my = 1;
+    player.wx = player.mx * TILE_SIZE + (TILE_SIZE / 2.0f);
+    player.wy = player.my * TILE_SIZE + (TILE_SIZE / 2.0f);
+    player.r = PI; 
+    player.speed = 150.0f; 
 }
 
-void init() {
-    initscr();
-    cbreak();
-    noecho();
-    nodelay(stdscr, TRUE);
-    keypad(stdscr, TRUE);
-    curs_set(0);
-    player.wz = 10;
-    player.wx = player.mx * TILE_SIZE;
-    player.wy = player.my * TILE_SIZE;
-}
+void draw(){
+    ClearBackground(BLACK);
 
-void insert(int y, int x, char v) {
-    if (y >= 0 && y < height && x >= 0 && x < width) 
-        display_buffer[width * y + x] = v;
-}
-
-void draw() {
-    memset(display_buffer, ' ', height * width);
-    //insert((int)player.wy, (int)player.wx, '@');
-    if(toggle_map == 1){
-        for(int i = 0; i<MAP_SIZE; i++)
-            for(int j = 0; j<MAP_SIZE; j++) insert(i+1, j, map[i][j]);
-        insert(player.my + 1, player.mx, '*');
+    for (int y = 0; y < MAP_SIZE; y++) {
+        for (int x = 0; x < MAP_SIZE; x++) {
+            if (map[y][x] == '#') {
+                DrawRectangle(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE, DARKGRAY);
+            } else {
+                DrawRectangle(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE, RAYWHITE);
+            }
+            DrawRectangleLines(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE, LIGHTGRAY);
+        }
     }
-    mvaddnstr(0, 0, display_buffer, height * width);
+    DrawCircle((int)player.wx, (int)player.wy, TILE_SIZE / 3.0f, BLUE);
+    Vector2 lineEnd = { 
+        player.wx + cos(player.r) * (TILE_SIZE * 1.2f), 
+        player.wy + sin(player.r) * (TILE_SIZE * 1.2f) 
+    };
+    DrawLineEx((Vector2){player.wx, player.wy}, lineEnd, 3.0f, RED);
+    DrawRectangle(0, 0, 420, 30, Fade(BLACK, 0.7f));
+    DrawText(TextFormat("FPS: %d  |  Pos: [%.1f, %.1f]  |  Rot: %.2f", 
+             GetFPS(), player.wx, player.wy, player.r), 10, 5, 20, GREEN);
 }
 
-void collision(float dx, float dy) {
-    // We update the world position
-    player.wx += dx;
-    player.wy += dy;
-    
-    // Recalculate map grid coordinates
-    player.mx = (int)(player.wx / TILE_SIZE);
-    player.my = (int)(player.wy / TILE_SIZE);
 
-    // Check collision: map[Y_INDEX][X_INDEX]
-    if (map[player.my][player.mx] == '#') {
-        player.wx -= dx; // Revert X
-        player.wy -= dy; // Revert Y
-        player.mx = (int)(player.wx / TILE_SIZE);
-        player.my = (int)(player.wy / TILE_SIZE);
+void collisions(float dx, float dy){
+    float next_wx = player.wx;
+    float next_wy = player.wy;
+    next_wx += dx;
+    next_wy += dy;
+    int next_mx = (int)(next_wx / TILE_SIZE);
+    int next_my = (int)(next_wy / TILE_SIZE);
+    if (map[next_my][next_mx] != '#') {
+        player.wx = next_wx;
+        player.wy = next_wy;
+        player.mx = next_mx;
+        player.my = next_my;
     }
 }
 
-void inputs() {
-    ch = getch();
-    if (ch == ERR) return;
-    
-    float dt = 1.0 / TARGET_FPS; 
+void inputs(){
+    float dt = GetFrameTime();
+
+    if (IsKeyDown(KEY_A)) player.r -= 3.0f * dt;
+    if (IsKeyDown(KEY_D)) player.r += 3.0f * dt;
     float mov_dist = player.speed * dt;
-    
-    if (ch == 'd') {
-        collision(mov_dist, 0);
+    float dx = cos(player.r) * mov_dist;
+    float dy = sin(player.r) * mov_dist;
+    if (IsKeyDown(KEY_W)) {
+        collisions(dx, 0);
+        collisions(0, dy);
     }
-    else if (ch == 'a') {
-        collision(-1 * mov_dist, 0);
-    }
-    else if (ch == 's') {
-        collision(0, mov_dist);
-    }
-    else if (ch == 'w') {
-        collision(0, -mov_dist);
-    }
-    else if (ch == 'm') {
-        toggle_map = !toggle_map;
+    if (IsKeyDown(KEY_S)) {
+        collisions(-dx, 0);
+        collisions(0, -dy);
     }
 }
-
-
-
-
-
-
-
 
 int main() {
+    InitWindow(screenWidth, screenHeight, "Raylib Top-Down Map");
+    SetTargetFPS(60);
+
     init();
-    init_buf();
-
-    struct timespec start, end;
-    float fps = 0.0; // Units per second
-
-    while (1) {
-        clock_gettime(CLOCK_MONOTONIC, &start);
-
+    
+    while (!WindowShouldClose()) {
         inputs();
-
+        BeginDrawing();
         draw();
-        attron(A_BOLD);
-        mvprintw(0, 0, "FPS: %2.0f  |  Pos: [%2.1f, %2.1f]", fps, player.wx, player.wy);
-        refresh();
-
-        clock_gettime(CLOCK_MONOTONIC, &end);
-        long elapsed = (end.tv_sec - start.tv_sec) * 1000000 + 
-                       (end.tv_nsec - start.tv_nsec) / 1000;
-
-        insert(0, 0, 'F');
-        insert(1, 0, 'P');
-        insert(2, 0, 'S');
-        if (elapsed < FRAME_TIME_USEC) {
-            usleep(FRAME_TIME_USEC - elapsed);
-        }
-        struct timespec total_end;
-        clock_gettime(CLOCK_MONOTONIC, &total_end);
-        double total_frame_time = (total_end.tv_sec - start.tv_sec) + 
-                                  (total_end.tv_nsec - start.tv_nsec) / 1e9;
-        fps = 1.0 / total_frame_time;
+        EndDrawing();
     }
 
-    if (display_buffer) free(display_buffer);
-    endwin();
+    CloseWindow();
     return 0;
 }
